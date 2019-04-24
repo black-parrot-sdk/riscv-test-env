@@ -183,14 +183,29 @@ reset_vector:                                                           \
 //-----------------------------------------------------------------------
 // Pass/Fail Macro
 //-----------------------------------------------------------------------
-
+// BP: Modified to work with BlackParrot termination condition
 #define RVTEST_PASS                                                     \
+        fence;                                                          \
+        li t0, 0xc00dead0;                                              \
+        mv a0, TESTNUM;                                                 \
+        li a1, 0x0000ffff;                                              \
+        and a0, a0, a1;                                                 \
+        sw a0, 0(t0);                                                   \
+                                                                        \
         fence;                                                          \
         li TESTNUM, 1;                                                  \
         ecall
 
+// BP: Modified to work with BlackParrot termination condition
 #define TESTNUM gp
 #define RVTEST_FAIL                                                     \
+        fence;                                                          \
+        li t0, 0xc00dead0;                                              \
+        mv a0, TESTNUM;                                                 \
+        li a1, 0x0000ffff;                                              \
+        and a0, a0, a1;                                                 \
+        sw a0, 0(t0);                                                   \
+                                                                        \
         fence;                                                          \
 1:      beqz TESTNUM, 1b;                                               \
         sll TESTNUM, TESTNUM, 1;                                        \
