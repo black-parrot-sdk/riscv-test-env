@@ -190,7 +190,7 @@ reset_vector:                                                           \
         mv a0, TESTNUM;                                                 \
         li a1, 0x0000ffff;                                              \
         and a0, a0, a1;                                                 \
-        sw a0, 0(t0);                                                   \
+        csrw 0x800, a0;                                                 \
                                                                         \
         fence;                                                          \
         li TESTNUM, 1;                                                  \
@@ -202,9 +202,9 @@ reset_vector:                                                           \
         fence;                                                          \
         li t0, 0xc00dead0;                                              \
         mv a0, TESTNUM;                                                 \
-        li a1, 0x0000ffff;                                              \
-        and a0, a0, a1;                                                 \
-        sw a0, 0(t0);                                                   \
+        li a1, 0xffff0000;                                              \
+        or a0, a0, a1;                                                  \
+        csrw 0x800, a0;                                                 \
                                                                         \
         fence;                                                          \
 1:      beqz TESTNUM, 1b;                                               \
