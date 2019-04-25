@@ -111,6 +111,7 @@
         .align  6;                                                      \
         .weak stvec_handler;                                            \
         .weak mtvec_handler;                                            \
+        .weak mtvec_handler;                                            \
         .globl _start;                                                  \
 _start:                                                                 \
         /* reset vector */                                              \
@@ -135,6 +136,11 @@ trap_vector:                                                            \
         INTERRUPT_HANDLER;                                              \
 handle_exception:                                                       \
         /* we don't know how to handle whatever the exception was */    \
+        /* ... but blackparrot does! */                                 \
+        li sp, 0x0000_0000_8FFF_DFFF;                                   \
+        la t5, bp_mtvec_handler;                                        \
+        beqz t5, other_exception;                                       \
+        jr t5;                                                          \
   other_exception:                                                      \
         /* some unhandlable exception occurred */                       \
   1:    ori TESTNUM, TESTNUM, 1337;                                     \
