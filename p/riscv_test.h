@@ -115,6 +115,10 @@
         .globl _start;                                                  \
 _start:                                                                 \
         /* reset vector */                                              \
+        /* BP: Initialize the stack pointer for our trap handler */     \
+        /* This won't work for multi-core.  Should dynamically grab */  \
+        /* From a fixed, m-mode stack pointer location */               \
+        li sp, 0x8FFFCFF0;                                              \
         j reset_vector;                                                 \
         .align 2;                                                       \
 trap_vector:                                                            \
@@ -137,7 +141,6 @@ trap_vector:                                                            \
 handle_exception:                                                       \
         /* we don't know how to handle whatever the exception was */    \
         /* ... but blackparrot does! */                                 \
-        li sp, 0x0000_0000_8FFF_DFFF;                                   \
         la t5, bp_mtvec_handler;                                        \
         beqz t5, other_exception;                                       \
         jr t5;                                                          \
