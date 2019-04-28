@@ -36,7 +36,6 @@ handle_reset:
   add sp, sp, t0
   csrw mscratch, sp
   call extra_boot
-  ld t0, mtimecmp
   la a0, userstart
   la a1, _end
   j vm_boot
