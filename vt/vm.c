@@ -137,34 +137,28 @@ static uint64_t map(uint64_t vaddr, uint64_t paddr)
   // local variables
   pte_t first_pte = pt[0][VPN2(vaddr)];
   pte_t* second_pte_ptr;
-  pte_t second_pte;
   pte_t* third_pte_ptr;
-  pte_t third_pte;
 
-  // first level                                                                                                        
+  // first level                                                                                                    
   if (first_pte & PTE_V) {
-    second_pte_ptr = ((pte_t*) (((first_pte & PTE_PPN) << PTE_PPN_OFFST) | (VPN1(vaddr) << PTE_OFF)));
-    second_pte = *second_pte_ptr;
+    second_pte_ptr = ((pte_t*) (((first_pte & MASK_PTE_PPN) << PTE_PPN_OFFSET) | (VPN1(vaddr) << PTE_OFF)));
   } else {
-    // creating new page                                                                                               
-    // get a new page from global ppgdir                                                                                
+    // creating new page                                                                                            
+    // get a new page from global ppgdir                                                                            
     uint64_t newPage = alloc();
     pt[0][VPN2(vaddr)] = ((newPage & ~0xfff) >> PTE_PPN_OFFSET) | PTE_V;
     second_pte_ptr =  ((pte_t*)(newPage | (VPN1(vaddr) << PTE_OFF)));
-    second_pte = *second_pte_ptr;
   }
 
-  // second level                                                                                                       
-  if (second_pte & PTE_V) {
-    third_pte_ptr = ((pte_t*) (((second_pte & PTE_PPN) << PTE_PPN_OFFST) | (VPN0(vaddr) << PTE_OFF)));
-    third_pte = *third_pte_ptr;
-    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> PTE_PPN_OFFST) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
+  // second level                                                                                                  
+  if (*second_pte_ptr & PTE_V) {
+    third_pte_ptr = ((pte_t*) (((*second_pte_ptr & MASK_PTE_PPN) << PTE_PPN_OFFSET) | (VPN0(vaddr) << PTE_OFF)));
+    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> PTE_PPN_OFFSET) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
   } else {
     uint64_t newPage = alloc();
-    *second_pte_ptr = ((newPage & ~0xfff) >> PTE_PPN_OFFST) | PTE_V;
+    *second_pte_ptr = ((newPage & ~0xfff) >> PTE_PPN_OFFSET) | PTE_V;
     third_pte_ptr = &((pte_t*) newPage)[VPN0(vaddr)];
-    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> PTE_PPN_OFFST) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
-    third_pte = *third_pte_ptr;
+    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> PTE_PPN_OFFSET) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
   }
   return 0;
 }
@@ -173,26 +167,20 @@ static pte_t va_to_pa(pte_t vaddr)
 {
   pte_t first_pte = pt[0][VPN2(vaddr)];
   pte_t* second_pte_ptr;
-  pte_t second_pte;
   pte_t* third_pte_ptr;
-  pte_t third_pte;
 
-  // first level                                                                                                                                                        
-  if (first_pte & PTE_V) {
-    second_pte_ptr = ((pte_t*) (((first_pte & PTE_PPN) << 2) | (VPN1(vaddr) << 3)));
-    second_pte = *second_pte_ptr;
-  } else {
+  // first level                                                                                                    
+  if (first_pte & PTE_V)
+    second_pte_ptr = ((pte_t*) (((first_pte & MASK_PTE_PPN) << 2) | (VPN1(vaddr) << 3)));
+  else
     return -1;
-  }
 
-  // second level                                                                                                                                                       
-  if (second_pte & PTE_V) {
-    third_pte_ptr = ((pte_t*) (((second_pte & PTE_PPN) << 2) | (VPN0(vaddr) << 3)) );
-    third_pte = *third_pte_ptr;
-  } else {
+  // second level                                                                                               
+   if (*second_pte_ptr & PTE_V)
+    third_pte_ptr = ((pte_t*) (((*second_pte_ptr & MASK_PTE_PPN) << 2) | (VPN0(vaddr) << 3)) );
+  else
     return -1;
-  }
-  return (third_pte & PTE_PPN) << 2;
+  return (*third_pte_ptr & MASK_PTE_PPN) << 2;
 } 
 
 static void evict(unsigned long addr)
