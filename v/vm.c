@@ -142,30 +142,29 @@ static uint64_t map(uint64_t vaddr, uint64_t paddr)
 
   // first level                                                                                                        
   if (first_pte & PTE_V) {
-    second_pte_ptr = ((pte_t*) (((first_pte & PTE_PPN) << 2) | (VPN1(vaddr) << 3)));
+    second_pte_ptr = ((pte_t*) (((first_pte & PTE_PPN) << PTE_PPN_OFFST) | (VPN1(vaddr) << PTE_OFF)));
     second_pte = *second_pte_ptr;
   } else {
     // creating new page                                                                                               
     // get a new page from global ppgdir                                                                                
     uint64_t newPage = alloc();
-    pt[0][VPN2(vaddr)] = ((newPage & ~0xfff) >> 2) | PTE_V;
-    second_pte_ptr =  ((pte_t*)(newPage | (VPN1(vaddr) << 3))) ;
+    pt[0][VPN2(vaddr)] = ((newPage & ~0xfff) >> PTE_PPN_OFFST) | PTE_V;
+    second_pte_ptr =  ((pte_t*)(newPage | (VPN1(vaddr) << PTE_OFF)));
     second_pte = *second_pte_ptr;
   }
 
   // second level                                                                                                       
   if (second_pte & PTE_V) {
-    third_pte_ptr = ((pte_t*) (((second_pte & PTE_PPN) << 2) | (VPN0(vaddr) << 3)) );
+    third_pte_ptr = ((pte_t*) (((second_pte & PTE_PPN) << PTE_PPN_OFFST) | (VPN0(vaddr) << PTE_OFF)));
     third_pte = *third_pte_ptr;
-    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> 2) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
+    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> PTE_PPN_OFFST) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
   } else {
     uint64_t newPage = alloc();
-    *second_pte_ptr = ((newPage & ~0xfff) >> 2) | PTE_V;
+    *second_pte_ptr = ((newPage & ~0xfff) >> PTE_PPN_OFFST) | PTE_V;
     third_pte_ptr = &((pte_t*) newPage)[VPN0(vaddr)];
-    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> 2) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
+    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> PTE_PPN_OFFST) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
     third_pte = *third_pte_ptr;
   }
-
   return 0;
 }
 

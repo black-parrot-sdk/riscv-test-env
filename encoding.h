@@ -171,6 +171,8 @@
 #define PTE_PPN_SHIFT 10
 #define PTE_PPN_OFFST 2
 
+#define PTE_OFF 3
+
 #define PPN 0xfffffffffff
 
 #define PGOFF 12
