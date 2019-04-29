@@ -14,12 +14,6 @@
 # define SATP_MODE_CHOICE SATP_MODE_SV39
 #endif
 
-#define OUT_OF_MEMORY ((pte_t) -1)
-
-#define VPN2(vaddr) ((vaddr >> 30) & (~(-1 << 9)))
-#define VPN1(vaddr) ((vaddr >> 21) & (~(-1 << 9)))
-#define VPN0(vaddr) ((vaddr >> 12) & (~(-1 << 9)))
-
 void trap_entry();
 void pop_tf(trapframe_t*);
 
@@ -99,10 +93,6 @@ typedef struct { pte_t addr; void* next; } freelist_t;
 freelist_t user_mapping[MAX_TEST_PAGES];
 freelist_t freelist_nodes[MAX_TEST_PAGES];
 freelist_t *freelist_head, *freelist_tail;
-// current location of user program and how
-// many pages needed
-pte_t upaddr;
-long  usize;
 
 void printhex(uint64_t x)
 {
@@ -115,57 +105,6 @@ void printhex(uint64_t x)
   str[16] = 0;
 
   cputstring(str);
-}
-
-// for testing purpose only alloc
-static pte_t alloc()
-{
-  if (freelist_head == 0) {
-    return OUT_OF_MEMORY;
-  }
-  pte_t res = freelist_head->addr;
-  if (freelist_head != freelist_tail)
-    freelist_head = freelist_head->next;
-  else
-    freelist_head = freelist_tail = 0;
-  return res;
-}
-
-static uint64_t map(uint64_t vaddr, uint64_t paddr)
-{
-  // local variables
-  pte_t first_pte = pt[0][VPN2(vaddr)];
-  pte_t* second_pte_ptr;
-  pte_t second_pte;
-  pte_t* third_pte_ptr;
-  pte_t third_pte;
-
-  // first level                                                                                                        
-  if (first_pte & PTE_V) {
-    second_pte_ptr = ((pte_t*) (((first_pte & PTE_PPN) << PTE_PPN_OFFST) | (VPN1(vaddr) << PTE_OFF)));
-    second_pte = *second_pte_ptr;
-  } else {
-    // creating new page                                                                                               
-    // get a new page from global ppgdir                                                                                
-    uint64_t newPage = alloc();
-    pt[0][VPN2(vaddr)] = ((newPage & ~0xfff) >> PTE_PPN_OFFST) | PTE_V;
-    second_pte_ptr =  ((pte_t*)(newPage | (VPN1(vaddr) << PTE_OFF)));
-    second_pte = *second_pte_ptr;
-  }
-
-  // second level                                                                                                       
-  if (second_pte & PTE_V) {
-    third_pte_ptr = ((pte_t*) (((second_pte & PTE_PPN) << PTE_PPN_OFFST) | (VPN0(vaddr) << PTE_OFF)));
-    third_pte = *third_pte_ptr;
-    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> PTE_PPN_OFFST) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
-  } else {
-    uint64_t newPage = alloc();
-    *second_pte_ptr = ((newPage & ~0xfff) >> PTE_PPN_OFFST) | PTE_V;
-    third_pte_ptr = &((pte_t*) newPage)[VPN0(vaddr)];
-    *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> PTE_PPN_OFFST) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
-    third_pte = *third_pte_ptr;
-  }
-  return 0;
 }
 
 static void evict(unsigned long addr)
@@ -209,7 +148,7 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
       assert(!(user_llpt[addr/PGSIZE] & PTE_D) && cause == CAUSE_STORE_PAGE_FAULT);
       user_llpt[addr/PGSIZE] |= PTE_D;
     }
-    //flush_page(addr);
+    flush_page(addr);
     return;
   }
 
@@ -221,17 +160,17 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
 
   uintptr_t new_pte = (node->addr >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_U | PTE_R | PTE_W | PTE_X;
   user_llpt[addr/PGSIZE] = new_pte | PTE_A | PTE_D;
-  //flush_page(addr);
+  flush_page(addr);
 
   assert(user_mapping[addr/PGSIZE].addr == 0);
   user_mapping[addr/PGSIZE] = *node;
 
-  //uintptr_t sstatus = set_csr(sstatus, SSTATUS_SUM);
-  memcpy((void*)(node->addr), (void*)(DRAM_BASE + addr), PGSIZE);
-  //write_csr(sstatus, sstatus);
+  uintptr_t sstatus = set_csr(sstatus, SSTATUS_SUM);
+  memcpy((void*)addr, uva2kva(addr), PGSIZE);
+  write_csr(sstatus, sstatus);
 
-  //user_llpt[addr/PGSIZE] = new_pte;
-  //flush_page(addr);
+  user_llpt[addr/PGSIZE] = new_pte;
+  flush_page(addr);
 
   __builtin___clear_cache(0,0);
 }
@@ -284,7 +223,7 @@ static void coherence_torture()
   }
 }
 
-void vm_boot(uintptr_t test_addr, uintptr_t user_end)
+void vm_boot(uintptr_t test_addr)
 {
   unsigned int random = ENTROPY;
   if (read_csr(mhartid) > 0)
@@ -320,17 +259,11 @@ void vm_boot(uintptr_t test_addr, uintptr_t user_end)
   if (read_csr(sptbr) != sptbr_value)
     assert(!"unsupported satp mode");
 
-  upaddr = (pte_t) test_addr;
-  usize = (user_end/PGSIZE) - (test_addr/PGSIZE);
-  // end and start share the same page
-  if (usize == 0L)
-    usize = 1;
-
   // Set up PMPs if present, ignoring illegal instruction trap if not.
   uintptr_t pmpc = PMP_NAPOT | PMP_R | PMP_W | PMP_X;
   uintptr_t pmpa = ((uintptr_t)1 << (__riscv_xlen == 32 ? 31 : 53)) - 1;
   asm volatile ("la t0, 1f\n\t"
-          //      "csrrw t0, mtvec, t0\n\t"
+                "csrrw t0, mtvec, t0\n\t"
                 "csrw pmpaddr0, %1\n\t"
                 "csrw pmpcfg0, %0\n\t"
                 ".align 2\n\t"
@@ -338,25 +271,24 @@ void vm_boot(uintptr_t test_addr, uintptr_t user_end)
                 : : "r" (pmpc), "r" (pmpa) : "t0");
 
   // set up supervisor trap handling
-  //write_csr(stvec, pa2kva(trap_entry));
-  //write_csr(sscratch, pa2kva(read_csr(mscratch)));
-  //write_csr(medeleg,
-  //  (1 << CAUSE_USER_ECALL) |
-  //  (1 << CAUSE_FETCH_PAGE_FAULT) |
-  //  (1 << CAUSE_LOAD_PAGE_FAULT) |
-  //  (1 << CAUSE_STORE_PAGE_FAULT));
+  write_csr(stvec, pa2kva(trap_entry));
+  write_csr(sscratch, pa2kva(read_csr(mscratch)));
+  write_csr(medeleg,
+    (1 << CAUSE_USER_ECALL) |
+    (1 << CAUSE_FETCH_PAGE_FAULT) |
+    (1 << CAUSE_LOAD_PAGE_FAULT) |
+    (1 << CAUSE_STORE_PAGE_FAULT));
   // FPU on; accelerator on; allow supervisor access to user memory access
-  // trapping into supervisor mode
-  write_csr(mstatus, MSTATUS_FS | MSTATUS_XS | PRV_S << MSTATUS_MPP_OFFSET);
+  write_csr(mstatus, MSTATUS_FS | MSTATUS_XS);
   write_csr(mie, 0);
 
   random = 1 + (random % MAX_TEST_PAGES);
-  freelist_head = ((void*)&freelist_nodes[0]);
-  freelist_tail = (&freelist_nodes[MAX_TEST_PAGES-1]);
+  freelist_head = pa2kva((void*)&freelist_nodes[0]);
+  freelist_tail = pa2kva(&freelist_nodes[MAX_TEST_PAGES-1]);
   for (long i = 0; i < MAX_TEST_PAGES; i++)
   {
-    freelist_nodes[i].addr = DRAM_BASE + MEGAPAGE_SIZE + random*PGSIZE;
-    freelist_nodes[i].next = (&freelist_nodes[i+1]);
+    freelist_nodes[i].addr = DRAM_BASE + (MAX_TEST_PAGES + random)*PGSIZE;
+    freelist_nodes[i].next = pa2kva(&freelist_nodes[i+1]);
     random = LFSR_NEXT(random);
   }
   freelist_nodes[MAX_TEST_PAGES-1].next = 0;
@@ -364,13 +296,5 @@ void vm_boot(uintptr_t test_addr, uintptr_t user_end)
   trapframe_t tf;
   memset(&tf, 0, sizeof(tf));
   tf.epc = test_addr - DRAM_BASE;
-  
-  //user_llpt[VPN0(tf.epc)] = ((pte_t)test_addr/RISCV_PGSIZE << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-  for (long i = 0; i < usize; i++)
-  {
-    long va = tf.epc + (i << PGOFF);
-    long pa = test_addr + (i << PGOFF);
-    map(va, pa);
-  }
   pop_tf(&tf);
 }
