@@ -3,7 +3,7 @@
 #ifndef _ENV_VIRTUAL_SINGLE_CORE_H
 #define _ENV_VIRTUAL_SINGLE_CORE_H
 
-#include "../pt/riscv_test.h"
+#include "../p/riscv_test.h"
 
 //-----------------------------------------------------------------------
 // Begin Macro

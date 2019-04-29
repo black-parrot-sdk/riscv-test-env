@@ -102,6 +102,7 @@ freelist_t *freelist_head, *freelist_tail;
 // current location of user program and how
 // many pages needed
 pte_t upaddr;
+pte_t uvaddr;
 long  usize;
 
 void printhex(uint64_t x)
@@ -165,9 +166,34 @@ static uint64_t map(uint64_t vaddr, uint64_t paddr)
     *third_pte_ptr = (((paddr & (PPN << PGOFF)) >> 2) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
     third_pte = *third_pte_ptr;
   }
-
   return 0;
 }
+
+static pte_t va_to_pa(pte_t vaddr)
+{
+  pte_t first_pte = pt[0][VPN2(vaddr)];
+  pte_t* second_pte_ptr;
+  pte_t second_pte;
+  pte_t* third_pte_ptr;
+  pte_t third_pte;
+
+  // first level                                                                                                                                                        
+  if (first_pte & PTE_V) {
+    second_pte_ptr = ((pte_t*) (((first_pte & PTE_PPN) << 2) | (VPN1(vaddr) << 3)));
+    second_pte = *second_pte_ptr;
+  } else {
+    return -1;
+  }
+
+  // second level                                                                                                                                                       
+  if (second_pte & PTE_V) {
+    third_pte_ptr = ((pte_t*) (((second_pte & PTE_PPN) << 2) | (VPN0(vaddr) << 3)) );
+    third_pte = *third_pte_ptr;
+  } else {
+    return -1;
+  }
+  return (third_pte & PTE_PPN) << 2;
+} 
 
 static void evict(unsigned long addr)
 {
@@ -196,6 +222,32 @@ static void evict(unsigned long addr)
       freelist_tail = node;
     }
   }
+}
+
+void handle_mtimer()
+{
+  // copying and remapping system program
+  for (long i = 0; i < usize; i++)
+  {
+    pte_t pa = alloc();
+    pte_t va = uvaddr + i * PGSIZE;
+    pte_t old_pa = va_to_pa(va);
+    if (pa == OUT_OF_MEMORY || old_pa == -1)
+      break;
+    else
+      memcpy((void*) pa, (void*) old_pa, PGSIZE);
+
+    if (i == 0)
+      upaddr = pa;
+    map(va, pa);
+  }
+
+  uint64_t* mtime = (uint64_t*) MTIME_BASE;
+  uint64_t* mtimecmp = (uint64_t*) MTIMECMP_BASE;
+  uint64_t hartid = read_csr(mhartid);
+  mtimecmp += hartid;
+  *mtimecmp = *mtime + TIMER_INTERVAL;
+  return;
 }
 
 void handle_fault(uintptr_t addr, uintptr_t cause)
@@ -263,6 +315,8 @@ void handle_trap(trapframe_t* tf)
   }
   else if (tf->cause == CAUSE_FETCH_PAGE_FAULT || tf->cause == CAUSE_LOAD_PAGE_FAULT || tf->cause == CAUSE_STORE_PAGE_FAULT)
     handle_fault(tf->badvaddr, tf->cause);
+  else if (((tf->cause << 1) >> 1) == IRQ_M_TIMER && tf->cause >> (__riscv_xlen - 1))  // timer interrupt
+    handle_mtimer();
   else
     assert(!"unexpected exception");
 
@@ -347,9 +401,9 @@ void vm_boot(uintptr_t test_addr, uintptr_t user_end)
   //  (1 << CAUSE_LOAD_PAGE_FAULT) |
   //  (1 << CAUSE_STORE_PAGE_FAULT));
   // FPU on; accelerator on; allow supervisor access to user memory access
-  // trapping into supervisor mode
-  write_csr(mstatus, MSTATUS_FS | MSTATUS_XS | PRV_S << MSTATUS_MPP_OFFSET);
-  write_csr(mie, 0);
+  // trapping into supervisor mode & enabling timer interrupts
+  write_csr(mstatus, MSTATUS_MPIE | MSTATUS_FS | MSTATUS_XS | PRV_S << MSTATUS_MPP_OFFSET);
+  write_csr(mie, MIP_MTIP);
 
   random = 1 + (random % MAX_TEST_PAGES);
   freelist_head = ((void*)&freelist_nodes[0]);
@@ -365,7 +419,8 @@ void vm_boot(uintptr_t test_addr, uintptr_t user_end)
   trapframe_t tf;
   memset(&tf, 0, sizeof(tf));
   tf.epc = test_addr - DRAM_BASE;
-  
+  uvaddr = tf.epc;  
+
   //user_llpt[VPN0(tf.epc)] = ((pte_t)test_addr/RISCV_PGSIZE << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
   for (long i = 0; i < usize; i++)
   {

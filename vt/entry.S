@@ -36,6 +36,7 @@ handle_reset:
   add sp, sp, t0
   csrw mscratch, sp
   call extra_boot
+  EXTRA_INIT_TIMER
   la a0, userstart
   la a1, _end
   j vm_boot
@@ -129,3 +130,5 @@ trap_entry:
 
   move  a0, sp
   j handle_trap
+	
+	
