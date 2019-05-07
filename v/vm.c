@@ -148,7 +148,7 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
       assert(!(user_llpt[addr/PGSIZE] & PTE_D) && cause == CAUSE_STORE_PAGE_FAULT);
       user_llpt[addr/PGSIZE] |= PTE_D;
     }
-    //flush_page(addr);
+    flush_page(addr);
     return;
   }
 
@@ -160,7 +160,7 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
 
   uintptr_t new_pte = (node->addr >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_U | PTE_R | PTE_W | PTE_X;
   user_llpt[addr/PGSIZE] = new_pte | PTE_A | PTE_D;
-  //flush_page(addr);
+  flush_page(addr);
 
   assert(user_mapping[addr/PGSIZE].addr == 0);
   user_mapping[addr/PGSIZE] = *node;
