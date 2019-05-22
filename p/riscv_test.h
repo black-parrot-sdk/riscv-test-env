@@ -114,11 +114,16 @@
         .weak bp_mtvec_handler;                                         \
         .globl _start;                                                  \
 _start:                                                                 \
-        /* reset vector */                                              \
-        /* BP: Initialize the stack pointer for our trap handler */     \
-        /* This won't work for multi-core.  Should dynamically grab */  \
-        /* From a fixed, m-mode stack pointer location */               \
-        li sp, 0x8FFFCFF0;                                              \
+        /* This is the BlackParrot emulation stack setup */             \
+        li   sp, 0x8FFFCFF0;                                            \
+                                                                        \
+        csrr x1, mhartid;                                               \
+        slli x1, x1, 13;                                                \
+        sub  sp, sp, x1;                                                \
+                                                                        \
+        /* save the stack pointer to mscratch */                        \
+        /* , so it can be used on first trap entry*/                    \
+        csrw mscratch, sp;                                              \
         j reset_vector;                                                 \
         .align 2;                                                       \
 trap_vector:                                                            \
