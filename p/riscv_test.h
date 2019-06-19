@@ -157,7 +157,7 @@ handle_exception:                                                       \
         j write_tohost;                                                 \
 reset_vector:                                                           \
         RISCV_MULTICORE_DISABLE;                                        \
-        INIT_SATP;                                                     \
+        INIT_SATP;                                                      \
         INIT_PMP;                                                       \
         DELEGATE_NO_TRAPS;                                              \
         li TESTNUM, 0;                                                  \
@@ -198,26 +198,30 @@ reset_vector:                                                           \
 // Pass/Fail Macro
 //-----------------------------------------------------------------------
 // BP: Modified to work with BlackParrot termination condition
+//   TODO: Finish should be a global constant
+#define TESTNUM gp
 #define RVTEST_PASS                                                     \
         li a0, 0;                                                       \
+        li a1, 0x03002000;                                              \
+        /* BP: Used to terminate spike */                               \
         csrw 0x800, a0;                                                 \
-        //                                                                \
-        //fence;                                                          \
-        //li TESTNUM, 1;                                                  \
-        //ecall
+        csrr a2, mhartid;                                               \
+        slli a2, a2, 3;                                                 \
+        add a1, a2, a1;                                                 \
+        sb a0, 0(a1);                                                   \
+        fence;                                                          \
 
 // BP: Modified to work with BlackParrot termination condition
-#define TESTNUM gp
 #define RVTEST_FAIL                                                     \
-        fence;                                                          \
         li a0, -1;                                                      \
+        li a1, 0x03002000;                                              \
+        /* BP: Used to terminate spike */                               \
         csrw 0x800, a0;                                                 \
-        //                                                                \
-        //fence;                                                          \
-1:      //beqz TESTNUM, 1b;                                               \
-        //sll TESTNUM, TESTNUM, 1;                                        \
-        //or TESTNUM, TESTNUM, 1;                                         \
-        //ecall
+        csrr a2, mhartid;                                               \
+        slli a2, a2, 3;                                                 \
+        add a1, a2, a1;                                                 \
+        sb a0, 0(a1);                                                   \
+        fence;                                                          \
 
 //-----------------------------------------------------------------------
 // Data Section Macro
