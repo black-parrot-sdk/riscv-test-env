@@ -6,6 +6,11 @@
 
 #include "riscv_test.h"
 
+#define MMIO_BASE_ADDR 0x3000000
+#define MMIO_HPRINT_ADDR 0x3000000
+#define MMIO_CPRINT_ADDR 0x3001000
+#define MMIO_FINISH_ADDR 0x3002000
+
 #if __riscv_xlen == 32
 # define SATP_MODE_CHOICE SATP_MODE_SV32
 #elif defined(Sv48)
@@ -29,6 +34,10 @@ static void do_tohost(uint64_t tohost_value)
 
 #define pa2kva(pa) ((void*)(pa) - DRAM_BASE - MEGAPAGE_SIZE)
 #define uva2kva(pa) ((void*)(pa) - MEGAPAGE_SIZE)
+
+#define vpn0(va) ((va >> PGSHIFT) % (1 << PTIDXBITS))
+#define vpn1(va) ((va >> (PGSHIFT + PTIDXBITS)) % (1 << PTIDXBITS))
+#define vpn2(va) ((va >> (PGSHIFT + 2*PTIDXBITS)) % (1 << PTIDXBITS))
 
 #define flush_page(addr) asm volatile ("sfence.vma %0" : : "r" (addr) : "memory")
 
@@ -68,21 +77,13 @@ void wtf()
   terminate(3); \
 } while(0)
 
-#define l1pt pt[0]
-#define user_l2pt pt[1]
-#if SATP_MODE_CHOICE == SATP_MODE_SV48
-# define NPT 6
+#if SATP_MODE_CHOICE == SATP_MODE_SV39
+# define NPT 5
+# define l1pt pt[0]
+# define user_l2pt pt[1]
 # define kernel_l2pt pt[2]
-# define kernel_l3pt pt[3]
-# define user_l3pt pt[4]
-# define user_llpt pt[5]
-#elif SATP_MODE_CHOICE == SATP_MODE_SV39
-# define NPT 4
-# define kernel_l2pt pt[2]
-# define user_llpt pt[3]
-#elif SATP_MODE_CHOICE == SATP_MODE_SV32
-# define NPT 2
-# define user_llpt user_l2pt
+# define user_l3pt pt[3]
+# define mmio_l3pt pt[4]
 #else
 # error Unknown SATP_MODE_CHOICE
 #endif
@@ -94,19 +95,6 @@ freelist_t user_mapping[MAX_TEST_PAGES];
 freelist_t freelist_nodes[MAX_TEST_PAGES];
 freelist_t *freelist_head, *freelist_tail;
 
-void printhex(uint64_t x)
-{
-  char str[17];
-  for (int i = 0; i < 16; i++)
-  {
-    str[15-i] = (x & 0xF) + ((x & 0xF) < 10 ? '0' : 'a'-10);
-    x >>= 4;
-  }
-  str[16] = 0;
-
-  cputstring(str);
-}
-
 static void evict(unsigned long addr)
 {
   assert(addr >= PGSIZE && addr < MAX_TEST_PAGES * PGSIZE);
@@ -116,10 +104,10 @@ static void evict(unsigned long addr)
   if (node->addr)
   {
     // check accessed and dirty bits
-    assert(user_llpt[addr/PGSIZE] & PTE_A);
+    assert(user_l3pt[addr/PGSIZE] & PTE_A);
     uintptr_t sstatus = set_csr(sstatus, SSTATUS_SUM);
     if (memcmp((void*)addr, uva2kva(addr), PGSIZE)) {
-      assert(user_llpt[addr/PGSIZE] & PTE_D);
+      assert(user_l3pt[addr/PGSIZE] & PTE_D);
       memcpy((void*)addr, uva2kva(addr), PGSIZE);
     }
     write_csr(sstatus, sstatus);
@@ -141,12 +129,12 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
   assert(addr >= PGSIZE && addr < MAX_TEST_PAGES * PGSIZE);
   addr = addr/PGSIZE*PGSIZE;
 
-  if (user_llpt[addr/PGSIZE]) {
-    if (!(user_llpt[addr/PGSIZE] & PTE_A)) {
-      user_llpt[addr/PGSIZE] |= PTE_A;
+  if (user_l3pt[addr/PGSIZE]) {
+    if (!(user_l3pt[addr/PGSIZE] & PTE_A)) {
+      user_l3pt[addr/PGSIZE] |= PTE_A;
     } else {
-      assert(!(user_llpt[addr/PGSIZE] & PTE_D) && cause == CAUSE_STORE_PAGE_FAULT);
-      user_llpt[addr/PGSIZE] |= PTE_D;
+      assert(!(user_l3pt[addr/PGSIZE] & PTE_D) && cause == CAUSE_STORE_PAGE_FAULT);
+      user_l3pt[addr/PGSIZE] |= PTE_D;
     }
     flush_page(addr);
     return;
@@ -159,7 +147,7 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
     freelist_tail = 0;
 
   uintptr_t new_pte = (node->addr >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_U | PTE_R | PTE_W | PTE_X;
-  user_llpt[addr/PGSIZE] = new_pte | PTE_A | PTE_D;
+  user_l3pt[addr/PGSIZE] = new_pte | PTE_A | PTE_D;
   flush_page(addr);
 
   assert(user_mapping[addr/PGSIZE].addr == 0);
@@ -169,7 +157,7 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
   memcpy((void*)(node->addr), (void*)(DRAM_BASE + addr), PGSIZE);
   //write_csr(sstatus, sstatus);
 
-  //user_llpt[addr/PGSIZE] = new_pte;
+  //user_l3pt[addr/PGSIZE] = new_pte;
   //flush_page(addr);
 
   __builtin___clear_cache(0,0);
@@ -237,18 +225,17 @@ void vm_boot(uintptr_t test_addr)
   // map user to lowermost megapage
   l1pt[0] = ((pte_t)user_l2pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
   // map kernel to uppermost megapage
-#if SATP_MODE_CHOICE == SATP_MODE_SV48
+#if SATP_MODE_CHOICE == SATP_MODE_SV39
   l1pt[PTES_PER_PT-1] = ((pte_t)kernel_l2pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-  kernel_l2pt[PTES_PER_PT-1] = ((pte_t)kernel_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-  kernel_l3pt[PTES_PER_PT-1] = (DRAM_BASE/RISCV_PGSIZE << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-  user_l2pt[0] = ((pte_t)user_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-  user_l3pt[0] = ((pte_t)user_llpt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-#elif SATP_MODE_CHOICE == SATP_MODE_SV39
-  l1pt[PTES_PER_PT-1] = ((pte_t)kernel_l2pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
+  
   kernel_l2pt[PTES_PER_PT-1] = (DRAM_BASE/RISCV_PGSIZE << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-  user_l2pt[0] = ((pte_t)user_llpt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-#elif SATP_MODE_CHOICE == SATP_MODE_SV32
-  l1pt[PTES_PER_PT-1] = (DRAM_BASE/RISCV_PGSIZE << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+  
+  user_l2pt[0] = ((pte_t)user_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
+  user_l2pt[vpn1(MMIO_BASE_ADDR)] = ((pte_t)mmio_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
+  
+  mmio_l3pt[vpn0(MMIO_HPRINT_ADDR)] = (MMIO_HPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+  mmio_l3pt[vpn0(MMIO_CPRINT_ADDR)] = (MMIO_CPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+  mmio_l3pt[vpn0(MMIO_FINISH_ADDR)] = (MMIO_FINISH_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
 #else
 # error
 #endif
@@ -288,7 +275,7 @@ void vm_boot(uintptr_t test_addr)
   for (long i = 0; i < MAX_TEST_PAGES; i++)
   {
     freelist_nodes[i].addr = DRAM_BASE + MEGAPAGE_SIZE + random*PGSIZE;
-    freelist_nodes[i].next = (&freelist_nodes[i+1]);
+    freelist_nodes[i].next = &freelist_nodes[i+1];
     random = LFSR_NEXT(random);
   }
   freelist_nodes[MAX_TEST_PAGES-1].next = 0;
@@ -296,5 +283,9 @@ void vm_boot(uintptr_t test_addr)
   trapframe_t tf;
   memset(&tf, 0, sizeof(tf));
   tf.epc = test_addr - DRAM_BASE;
+  
+  
+  
+  
   pop_tf(&tf);
 }
