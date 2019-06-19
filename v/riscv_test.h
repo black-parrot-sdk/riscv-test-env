@@ -21,7 +21,7 @@ extra_boot:                                                             \
         ret;                                                            \
         .global userstart;                                              \
 userstart:                                                              \
-        init
+        init                                                            \
 
 //-----------------------------------------------------------------------
 // Pass/Fail Macro
