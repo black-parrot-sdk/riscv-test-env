@@ -178,6 +178,7 @@ reset_vector:                                                           \
         csrr t1, medeleg;                                               \
         bne t0, t1, other_exception;                                    \
 1:      csrwi mstatus, 0;                                               \
+        RVTEST_ENABLE_MACHINE;                                          \
         init;                                                           \
         EXTRA_INIT;                                                     \
         EXTRA_INIT_TIMER;                                               \
