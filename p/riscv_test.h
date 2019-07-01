@@ -203,8 +203,6 @@ reset_vector:                                                           \
 #define RVTEST_PASS                                                     \
         li a0, 0;                                                       \
         li a1, 0x03002000;                                              \
-        /* BP: Used to terminate spike */                               \
-        csrw 0x800, a0;                                                 \
         csrr a2, mhartid;                                               \
         slli a2, a2, 3;                                                 \
         add a1, a2, a1;                                                 \
@@ -215,8 +213,6 @@ reset_vector:                                                           \
 #define RVTEST_FAIL                                                     \
         li a0, -1;                                                      \
         li a1, 0x03002000;                                              \
-        /* BP: Used to terminate spike */                               \
-        csrw 0x800, a0;                                                 \
         csrr a2, mhartid;                                               \
         slli a2, a2, 3;                                                 \
         add a1, a2, a1;                                                 \
