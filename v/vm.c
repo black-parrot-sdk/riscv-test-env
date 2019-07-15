@@ -60,7 +60,9 @@ static void cputstring(const char* s)
 
 static void terminate(int code)
 {
-  do_tohost(code);
+  uint64_t mhartid = read_csr(mhartid);
+  uint64_t *finish_address = (uint64_t*)(0x03002000 + (mhartid << 3));
+  *finish_address = code;
   while (1);
 }
 
@@ -169,8 +171,8 @@ void handle_trap(trapframe_t* tf)
   {
     int n = tf->gpr[10];
 
-    for (long i = 1; i < MAX_TEST_PAGES; i++)
-      evict(i*PGSIZE);
+    //for (long i = 1; i < MAX_TEST_PAGES; i++)
+    //  evict(i*PGSIZE);
 
     terminate(n);
   }
