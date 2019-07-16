@@ -6,6 +6,8 @@
 
 #include "riscv_test.h"
 
+#define NC 16
+
 #define MMIO_BASE_ADDR 0x3000000
 #define MMIO_HPRINT_ADDR 0x3000000
 #define MMIO_CPRINT_ADDR 0x3001000
@@ -32,6 +34,24 @@ static void do_tohost(uint64_t tohost_value)
   tohost = tohost_value;
 }
 
+volatile uint64_t start_barrier = 0;
+volatile uint64_t exclusion = 0;
+
+void lock() {
+  asm volatile ("1:\n\t"
+                "li t0, 1\n\t"
+                "lr.d t1, (%0)\n\t"
+                "bnez t1, 1b\n\t"
+                "sc.d t1, t0, (%0)\n\t"
+                "bnez t1, 1b\n\t"
+                : : "r" (&exclusion) :);
+}
+
+void unlock() {
+  __sync_synchronize(); // Memory barrier.
+  exclusion = 0;
+}
+
 #define pa2kva(pa) ((void*)(pa) - DRAM_BASE - MEGAPAGE_SIZE)
 #define uva2kva(pa) ((void*)(pa) - MEGAPAGE_SIZE)
 
@@ -49,7 +69,10 @@ static uint64_t lfsr63(uint64_t x)
 
 static void cputchar(int x)
 {
-  do_tohost(0x0101000000000000 | (unsigned char)x);
+  char ch = (char)x;
+  uint64_t mhartid = read_csr(mhartid);
+  char* ch_ptr = (char*)(0x03001000 + (mhartid << 3));
+  *ch_ptr = ch;
 }
 
 static void cputstring(const char* s)
@@ -81,53 +104,26 @@ void wtf()
 
 #if SATP_MODE_CHOICE == SATP_MODE_SV39
 # define NPT 5
-# define l1pt pt[0]
-# define user_l2pt pt[1]
-# define kernel_l2pt pt[2]
-# define user_l3pt pt[3]
-# define mmio_l3pt pt[4]
+# define l1pt pt[hartid][0]
+# define user_l2pt pt[hartid][1]
+# define kernel_l2pt pt[hartid][2]
+# define user_l3pt pt[hartid][3]
+# define mmio_l3pt pt[hartid][4]
 #else
 # error Unknown SATP_MODE_CHOICE
 #endif
-pte_t pt[NPT][PTES_PER_PT] __attribute__((aligned(PGSIZE)));
+
+pte_t pt[NC][NPT][PTES_PER_PT] __attribute__((aligned(PGSIZE)));
 
 typedef struct { pte_t addr; void* next; } freelist_t;
 
-freelist_t user_mapping[MAX_TEST_PAGES];
-freelist_t freelist_nodes[MAX_TEST_PAGES];
-freelist_t *freelist_head, *freelist_tail;
-
-static void evict(unsigned long addr)
-{
-  assert(addr >= PGSIZE && addr < MAX_TEST_PAGES * PGSIZE);
-  addr = addr/PGSIZE*PGSIZE;
-
-  freelist_t* node = &user_mapping[addr/PGSIZE];
-  if (node->addr)
-  {
-    // check accessed and dirty bits
-    assert(user_l3pt[addr/PGSIZE] & PTE_A);
-    uintptr_t sstatus = set_csr(sstatus, SSTATUS_SUM);
-    if (memcmp((void*)addr, uva2kva(addr), PGSIZE)) {
-      assert(user_l3pt[addr/PGSIZE] & PTE_D);
-      memcpy((void*)addr, uva2kva(addr), PGSIZE);
-    }
-    write_csr(sstatus, sstatus);
-
-    user_mapping[addr/PGSIZE].addr = 0;
-
-    if (freelist_tail == 0)
-      freelist_head = freelist_tail = node;
-    else
-    {
-      freelist_tail->next = node;
-      freelist_tail = node;
-    }
-  }
-}
+volatile freelist_t freelist_nodes[MAX_TEST_PAGES];
+volatile freelist_t *freelist_head, *freelist_tail;
 
 void handle_fault(uintptr_t addr, uintptr_t cause)
 {
+  uint64_t hartid = read_csr(mhartid);
+  
   assert(addr >= PGSIZE && addr < MAX_TEST_PAGES * PGSIZE);
   addr = addr/PGSIZE*PGSIZE;
 
@@ -152,9 +148,6 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
   user_l3pt[addr/PGSIZE] = new_pte | PTE_A | PTE_D;
   flush_page(addr);
 
-  assert(user_mapping[addr/PGSIZE].addr == 0);
-  user_mapping[addr/PGSIZE] = *node;
-
   //uintptr_t sstatus = set_csr(sstatus, SSTATUS_SUM);
   memcpy((void*)(node->addr), (void*)(DRAM_BASE + addr), PGSIZE);
   //write_csr(sstatus, sstatus);
@@ -170,10 +163,6 @@ void handle_trap(trapframe_t* tf)
   if (tf->cause == CAUSE_USER_ECALL)
   {
     int n = tf->gpr[10];
-
-    //for (long i = 1; i < MAX_TEST_PAGES; i++)
-    //  evict(i*PGSIZE);
-
     terminate(n);
   }
   else if (tf->cause == CAUSE_ILLEGAL_INSTRUCTION)
@@ -189,8 +178,11 @@ void handle_trap(trapframe_t* tf)
       assert(!"illegal instruction");
     tf->epc += 4;
   }
-  else if (tf->cause == CAUSE_FETCH_PAGE_FAULT || tf->cause == CAUSE_LOAD_PAGE_FAULT || tf->cause == CAUSE_STORE_PAGE_FAULT)
+  else if (tf->cause == CAUSE_FETCH_PAGE_FAULT || tf->cause == CAUSE_LOAD_PAGE_FAULT || tf->cause == CAUSE_STORE_PAGE_FAULT) {
+    lock();
     handle_fault(tf->badvaddr, tf->cause);
+    unlock();
+  }
   else
     assert(!"unexpected exception");
 
@@ -215,32 +207,32 @@ static void coherence_torture()
 
 void vm_boot(uintptr_t test_addr)
 {
+  uint64_t hartid = read_csr(mhartid);
   unsigned int random = ENTROPY;
-  if (read_csr(mhartid) > 0)
-    coherence_torture();
 
   _Static_assert(SIZEOF_TRAPFRAME_T == sizeof(trapframe_t), "???");
-
+      
 #if (MAX_TEST_PAGES > PTES_PER_PT) || (DRAM_BASE % MEGAPAGE_SIZE) != 0
 # error
 #endif
-  // map user to lowermost megapage
-  l1pt[0] = ((pte_t)user_l2pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-  // map kernel to uppermost megapage
+    // map user to lowermost megapage
+    l1pt[0] = ((pte_t)user_l2pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
+    // map kernel to uppermost megapage
 #if SATP_MODE_CHOICE == SATP_MODE_SV39
-  l1pt[PTES_PER_PT-1] = ((pte_t)kernel_l2pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-  
-  kernel_l2pt[PTES_PER_PT-1] = (DRAM_BASE/RISCV_PGSIZE << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-  
-  user_l2pt[0] = ((pte_t)user_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-  user_l2pt[vpn1(MMIO_BASE_ADDR)] = ((pte_t)mmio_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-  
-  mmio_l3pt[vpn0(MMIO_HPRINT_ADDR)] = (MMIO_HPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-  mmio_l3pt[vpn0(MMIO_CPRINT_ADDR)] = (MMIO_CPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-  mmio_l3pt[vpn0(MMIO_FINISH_ADDR)] = (MMIO_FINISH_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    l1pt[PTES_PER_PT-1] = ((pte_t)kernel_l2pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
+    
+    kernel_l2pt[PTES_PER_PT-1] = (DRAM_BASE/RISCV_PGSIZE << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    
+    user_l2pt[0] = ((pte_t)user_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
+    user_l2pt[vpn1(MMIO_BASE_ADDR)] = ((pte_t)mmio_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
+    
+    mmio_l3pt[vpn0(MMIO_HPRINT_ADDR)] = (MMIO_HPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    mmio_l3pt[vpn0(MMIO_CPRINT_ADDR)] = (MMIO_CPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    mmio_l3pt[vpn0(MMIO_FINISH_ADDR)] = (MMIO_FINISH_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
 #else
 # error
 #endif
+
   uintptr_t vm_choice = SATP_MODE_CHOICE;
   uintptr_t sptbr_value = ((uintptr_t)l1pt >> PGSHIFT)
                         | (vm_choice * (SATP_MODE & ~(SATP_MODE<<1)));
@@ -252,42 +244,36 @@ void vm_boot(uintptr_t test_addr)
   uintptr_t pmpc = PMP_NAPOT | PMP_R | PMP_W | PMP_X;
   uintptr_t pmpa = ((uintptr_t)1 << (__riscv_xlen == 32 ? 31 : 53)) - 1;
   asm volatile ("la t0, 1f\n\t"
-          //      "csrrw t0, mtvec, t0\n\t"
                 "csrw pmpaddr0, %1\n\t"
                 "csrw pmpcfg0, %0\n\t"
                 ".align 2\n\t"
                 "1:"
                 : : "r" (pmpc), "r" (pmpa) : "t0");
 
-  // set up supervisor trap handling
-  //write_csr(stvec, pa2kva(trap_entry));
-  //write_csr(sscratch, pa2kva(read_csr(mscratch)));
-  //write_csr(medeleg,
-  //  (1 << CAUSE_USER_ECALL) |
-  //  (1 << CAUSE_FETCH_PAGE_FAULT) |
-  //  (1 << CAUSE_LOAD_PAGE_FAULT) |
-  //  (1 << CAUSE_STORE_PAGE_FAULT));
   // FPU on; accelerator on; allow supervisor access to user memory access
   write_csr(mstatus, MSTATUS_FS | MSTATUS_XS);
   write_csr(mie, 0);
 
-  random = 1 + (random % MAX_TEST_PAGES);
-  freelist_head = ((void*)&freelist_nodes[0]);
-  freelist_tail = (&freelist_nodes[MAX_TEST_PAGES-1]);
-  for (long i = 0; i < MAX_TEST_PAGES; i++)
-  {
-    freelist_nodes[i].addr = DRAM_BASE + MEGAPAGE_SIZE + random*PGSIZE;
-    freelist_nodes[i].next = &freelist_nodes[i+1];
-    random = LFSR_NEXT(random);
+  if(hartid == 0) {
+
+    random = 1 + (random % MAX_TEST_PAGES);
+    freelist_head = ((void*)&freelist_nodes[0]);
+    freelist_tail = (&freelist_nodes[MAX_TEST_PAGES-1]);
+    for (long i = 0; i < MAX_TEST_PAGES; i++)
+    {
+      freelist_nodes[i].addr = DRAM_BASE + MEGAPAGE_SIZE + random*PGSIZE;
+      freelist_nodes[i].next = &freelist_nodes[i+1];
+      random = LFSR_NEXT(random);
+    }
+    freelist_nodes[MAX_TEST_PAGES-1].next = 0;
+    start_barrier = 1;
   }
-  freelist_nodes[MAX_TEST_PAGES-1].next = 0;
+  else {
+    while(start_barrier != 1) {}
+  }
 
   trapframe_t tf;
   memset(&tf, 0, sizeof(tf));
   tf.epc = test_addr - DRAM_BASE;
-  
-  
-  
-  
   pop_tf(&tf);
 }
