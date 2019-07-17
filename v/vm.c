@@ -39,11 +39,15 @@ volatile uint64_t exclusion = 0;
 
 void lock() {
   asm volatile ("1:\n\t"
+                "sd t0, 0(sp)\n\t"
+                "sd t1, -8(sp)\n\t"
                 "li t0, 1\n\t"
                 "lr.d t1, (%0)\n\t"
                 "bnez t1, 1b\n\t"
                 "sc.d t1, t0, (%0)\n\t"
                 "bnez t1, 1b\n\t"
+                "ld t0, 0(sp)\n\t"
+                "ld t1, -8(sp)\n\t"
                 : : "r" (&exclusion) :);
 }
 
@@ -138,11 +142,15 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
     return;
   }
 
+  lock();
+  
   freelist_t* node = freelist_head;
   assert(node);
   freelist_head = node->next;
   if (freelist_head == freelist_tail)
     freelist_tail = 0;
+  
+  unlock();
 
   uintptr_t new_pte = (node->addr >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_U | PTE_R | PTE_W | PTE_X;
   user_l3pt[addr/PGSIZE] = new_pte | PTE_A | PTE_D;
@@ -179,9 +187,7 @@ void handle_trap(trapframe_t* tf)
     tf->epc += 4;
   }
   else if (tf->cause == CAUSE_FETCH_PAGE_FAULT || tf->cause == CAUSE_LOAD_PAGE_FAULT || tf->cause == CAUSE_STORE_PAGE_FAULT) {
-    lock();
     handle_fault(tf->badvaddr, tf->cause);
-    unlock();
   }
   else
     assert(!"unexpected exception");
