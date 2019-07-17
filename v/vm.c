@@ -117,8 +117,8 @@ pte_t pt[NC][NPT][PTES_PER_PT] __attribute__((aligned(PGSIZE)));
 
 typedef struct { pte_t addr; void* next; } freelist_t;
 
-volatile freelist_t freelist_nodes[MAX_TEST_PAGES];
-volatile freelist_t *freelist_head, *freelist_tail;
+freelist_t freelist_nodes[MAX_TEST_PAGES];
+freelist_t *freelist_head, *freelist_tail;
 
 void handle_fault(uintptr_t addr, uintptr_t cause)
 {
