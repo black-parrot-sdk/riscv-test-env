@@ -26,6 +26,7 @@
 #define MSTATUS_UXL         0x0000000300000000
 #define MSTATUS_SXL         0x0000000C00000000
 #define MSTATUS64_SD        0x8000000000000000
+#define MSTATUS_MPP_OFFSET  11
 
 #define SSTATUS_UIE         0x00000001
 #define SSTATUS_SIE         0x00000002
@@ -166,10 +167,17 @@
 #define PTE_A     0x040 // Accessed
 #define PTE_D     0x080 // Dirty
 #define PTE_SOFT  0x300 // Reserved for Software
-
 #define PTE_PPN_SHIFT 10
+#define PTE_PPN_OFFSET 2
+#define MASK_PTE_PPN 0x3ffffffffffc00
+#define PTE_OFF 3
+
+#define PPN 0xfffffffffff
+
+#define PGOFF 12
 
 #define PTE_TABLE(PTE) (((PTE) & (PTE_V | PTE_R | PTE_W | PTE_X)) == PTE_V)
+
 
 #ifdef __riscv
 
