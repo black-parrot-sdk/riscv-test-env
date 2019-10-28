@@ -103,6 +103,8 @@
 #define EXTRA_TVEC_MACHINE
 #define EXTRA_INIT
 #define EXTRA_INIT_TIMER
+#define SAVE_REGS
+#define RESTORE_REGS
 
 #define INTERRUPT_HANDLER j other_exception /* No interrupts should occur */
 
@@ -115,7 +117,7 @@
         .globl _start;                                                  \
 _start:                                                                 \
         /* This is the BlackParrot emulation stack setup */             \
-        li   sp, 0x8FFFCFF0;                                            \
+        li   sp, 0x8000CFF0;                                            \
                                                                         \
         csrr x1, mhartid;                                               \
         slli x1, x1, 13;                                                \
@@ -127,6 +129,7 @@ _start:                                                                 \
         j reset_vector;                                                 \
         .align 2;                                                       \
 trap_vector:                                                            \
+        SAVE_REGS;                                                      \
         /* test whether the test came from pass/fail */                 \
         csrr t5, mcause;                                                \
         li t6, CAUSE_USER_ECALL;                                        \
@@ -143,6 +146,7 @@ trap_vector:                                                            \
   1:    csrr t5, mcause;                                                \
         bgez t5, handle_exception;                                      \
         INTERRUPT_HANDLER;                                              \
+        RESTORE_REGS;                                                   \
 handle_exception:                                                       \
         /* we don't know how to handle whatever the exception was */    \
         /* ... but blackparrot does! */                                 \
