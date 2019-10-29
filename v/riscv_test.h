@@ -28,10 +28,10 @@ userstart:                                                              \
 //-----------------------------------------------------------------------
 
 #undef RVTEST_PASS
-#define RVTEST_PASS li a0, 0; scall
+#define RVTEST_PASS li a0, 0; ecall
 
 #undef RVTEST_FAIL
-#define RVTEST_FAIL sll a0, TESTNUM, 1; 1:beqz a0, 1b; or a0, a0, 1; scall;
+#define RVTEST_FAIL sll a0, TESTNUM, 1; 1:beqz a0, 1b; or a0, a0, 1; ecall;
 
 //-----------------------------------------------------------------------
 // Data Section Macro
@@ -50,7 +50,7 @@ userstart:                                                              \
 #define PGSHIFT 12
 #define PGSIZE (1UL << PGSHIFT)
 
-#define SIZEOF_TRAPFRAME_T ((__riscv_xlen / 8) * 36)
+#define SIZEOF_TRAPFRAME_T ((__riscv_xlen / 8) * 37)
 
 #ifndef __ASSEMBLER__
 
@@ -69,6 +69,7 @@ typedef struct
   long epc;
   long badvaddr;
   long cause;
+  long hartid;
 } trapframe_t;
 #endif
 

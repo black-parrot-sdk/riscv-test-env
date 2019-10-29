@@ -124,10 +124,8 @@ typedef struct { pte_t addr; void* next; } freelist_t;
 freelist_t freelist_nodes[MAX_TEST_PAGES];
 freelist_t *freelist_head, *freelist_tail;
 
-void handle_fault(uintptr_t addr, uintptr_t cause)
+void handle_fault(uintptr_t addr, uintptr_t cause, uintptr_t hartid)
 {
-  uint64_t hartid = read_csr(mhartid);
-  
   assert(addr >= PGSIZE && addr < MAX_TEST_PAGES * PGSIZE);
   addr = addr/PGSIZE*PGSIZE;
 
@@ -156,38 +154,20 @@ void handle_fault(uintptr_t addr, uintptr_t cause)
   user_l3pt[addr/PGSIZE] = new_pte | PTE_A | PTE_D;
   flush_page(addr);
 
-  //uintptr_t sstatus = set_csr(sstatus, SSTATUS_SUM);
-  memcpy((void*)(node->addr), (void*)(DRAM_BASE + addr), PGSIZE);
-  //write_csr(sstatus, sstatus);
+  uintptr_t sstatus = set_csr(sstatus, SSTATUS_SUM);
+  memcpy((void*)addr, uva2kva(addr), PGSIZE);
+  write_csr(sstatus, sstatus);
 
-  //user_l3pt[addr/PGSIZE] = new_pte;
-  //flush_page(addr);
+  user_l3pt[addr/PGSIZE] = new_pte;
+  flush_page(addr);
 
   __builtin___clear_cache(0,0);
 }
 
 void handle_trap(trapframe_t* tf)
 {
-  if (tf->cause == CAUSE_USER_ECALL)
-  {
-    int n = tf->gpr[10];
-    terminate(n);
-  }
-  else if (tf->cause == CAUSE_ILLEGAL_INSTRUCTION)
-  {
-    assert(tf->epc % 4 == 0);
-
-    int* fssr;
-    asm ("jal %0, 1f; fssr x0; 1:" : "=r"(fssr));
-
-    if (*(int*)tf->epc == *fssr)
-      terminate(1); // FP test on non-FP hardware.  "succeed."
-    else
-      assert(!"illegal instruction");
-    tf->epc += 4;
-  }
-  else if (tf->cause == CAUSE_FETCH_PAGE_FAULT || tf->cause == CAUSE_LOAD_PAGE_FAULT || tf->cause == CAUSE_STORE_PAGE_FAULT) {
-    handle_fault(tf->badvaddr, tf->cause);
+  if (tf->cause == CAUSE_FETCH_PAGE_FAULT || tf->cause == CAUSE_LOAD_PAGE_FAULT || tf->cause == CAUSE_STORE_PAGE_FAULT) {
+    handle_fault(tf->badvaddr, tf->cause, tf->hartid);
   }
   else
     assert(!"unexpected exception");
@@ -252,25 +232,31 @@ void vm_boot(uintptr_t test_addr)
   uintptr_t pmpc = PMP_NAPOT | PMP_R | PMP_W | PMP_X;
   uintptr_t pmpa = ((uintptr_t)1 << (__riscv_xlen == 32 ? 31 : 53)) - 1;
   asm volatile ("la t0, 1f\n\t"
+                "csrrw t0, mtvec, t0\n\t"
                 "csrw pmpaddr0, %1\n\t"
                 "csrw pmpcfg0, %0\n\t"
                 ".align 2\n\t"
                 "1:"
+                "csrrw t0, mtvec, t0\n\t"
                 : : "r" (pmpc), "r" (pmpa) : "t0");
 
-  // FPU on; accelerator on; allow supervisor access to user memory access
-  write_csr(mstatus, MSTATUS_FS | MSTATUS_XS);
-  write_csr(mie, 0);
+  // set up supervisor trap handling
+  write_csr(stvec, pa2kva(trap_entry));
+  write_csr(sscratch, pa2kva(read_csr(mscratch)));
+  write_csr(medeleg,
+    (1 << CAUSE_FETCH_PAGE_FAULT) |
+    (1 << CAUSE_LOAD_PAGE_FAULT) |
+    (1 << CAUSE_STORE_PAGE_FAULT));
 
   if(hartid == 0) {
 
     random = 1 + (random % MAX_TEST_PAGES);
-    freelist_head = ((void*)&freelist_nodes[0]);
-    freelist_tail = (&freelist_nodes[MAX_TEST_PAGES-1]);
+    freelist_head = pa2kva((void*)&freelist_nodes[0]);
+    freelist_tail = pa2kva(&freelist_nodes[MAX_TEST_PAGES-1]);
     for (long i = 0; i < MAX_TEST_PAGES; i++)
     {
-      freelist_nodes[i].addr = DRAM_BASE + MEGAPAGE_SIZE + random*PGSIZE;
-      freelist_nodes[i].next = &freelist_nodes[i+1];
+      freelist_nodes[i].addr = DRAM_BASE + (MAX_TEST_PAGES + random)*PGSIZE;
+      freelist_nodes[i].next = pa2kva(&freelist_nodes[i+1]);
       random = LFSR_NEXT(random);
     }
     freelist_nodes[MAX_TEST_PAGES-1].next = 0;
@@ -283,5 +269,6 @@ void vm_boot(uintptr_t test_addr)
   trapframe_t tf;
   memset(&tf, 0, sizeof(tf));
   tf.epc = test_addr - DRAM_BASE;
+  tf.hartid = hartid;
   pop_tf(&tf);
 }
