@@ -39,15 +39,15 @@ volatile uint64_t exclusion = 0;
 
 void lock() {
   asm volatile ("1:\n\t"
-                "sd t0, 0(sp)\n\t"
-                "sd t1, -8(sp)\n\t"
+                "sd t0, -8(sp)\n\t"
+                "sd t1, -16(sp)\n\t"
                 "li t0, 1\n\t"
                 "lr.d t1, (%0)\n\t"
                 "bnez t1, 1b\n\t"
                 "sc.d t1, t0, (%0)\n\t"
                 "bnez t1, 1b\n\t"
-                "ld t0, 0(sp)\n\t"
-                "ld t1, -8(sp)\n\t"
+                "ld t0, -8(sp)\n\t"
+                "ld t1, -16(sp)\n\t"
                 : : "r" (&exclusion) :);
 }
 
