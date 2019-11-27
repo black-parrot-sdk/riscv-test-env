@@ -25,6 +25,9 @@ nmi_vector:
 
   .align 2
 trap_vector:
+  csrr t5, mcause
+  li t6, CAUSE_ILLEGAL_INSTRUCTION
+  beq t5, t6, bp_mtvec_handler
   csrr t0, mhartid
   li t1, 0x03002000
   slli t0, t0, 3
