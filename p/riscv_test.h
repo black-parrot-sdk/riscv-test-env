@@ -207,7 +207,7 @@ reset_vector:                                                           \
 #define TESTNUM gp
 #define RVTEST_PASS                                                     \
         li a0, 0;                                                       \
-        li a1, 0x03002000;                                              \
+        li a1, 0x00102000;                                              \
         csrr a2, mhartid;                                               \
         slli a2, a2, 3;                                                 \
         add a1, a2, a1;                                                 \
@@ -217,7 +217,7 @@ reset_vector:                                                           \
 // BP: Modified to work with BlackParrot termination condition
 #define RVTEST_FAIL                                                     \
         li a0, -1;                                                      \
-        li a1, 0x03002000;                                              \
+        li a1, 0x00102000;                                              \
         csrr a2, mhartid;                                               \
         slli a2, a2, 3;                                                 \
         add a1, a2, a1;                                                 \

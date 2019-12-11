@@ -12,8 +12,8 @@
 
 #define STACK_TOP (_end + 4096)
 
-#define MTIME_ADDR    0x200bff8
-#define MTIMECMP_ADDR 0x2004000
+#define MTIME_ADDR    0x00308000
+#define MTIMECMP_ADDR 0x00304000
 
   .section ".text.init","ax",@progbits
   .globl _start
@@ -40,7 +40,7 @@ trap_vector:
 
 ecall_handler:
   csrr t0, mhartid
-  li t1, 0x03002000
+  li t1, 0x00102000
   slli t0, t0, 3
   add t0, t0, t1
   sd a0, 0(t0)

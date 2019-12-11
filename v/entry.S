@@ -26,7 +26,7 @@ nmi_vector:
   .align 2
 trap_vector:
   csrr t0, mhartid
-  li t1, 0x03002000
+  li t1, 0x00102000
   slli t0, t0, 3
   add t0, t0, t1
   sd a0, 0(t0)

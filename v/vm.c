@@ -8,10 +8,11 @@
 
 #define NC 16
 
-#define MMIO_BASE_ADDR 0x3000000
-#define MMIO_HPRINT_ADDR 0x3000000
-#define MMIO_CPRINT_ADDR 0x3001000
-#define MMIO_FINISH_ADDR 0x3002000
+#define MMIO_BASE_ADDR   0x0100000
+#define MMIO_HPRINT_ADDR 0x0100000
+#define MMIO_CPRINT_ADDR 0x0101000
+#define MMIO_FINISH_ADDR 0x0102000
+#define CLINT_BASE_ADDR  0x0300000
 
 #if __riscv_xlen == 32
 # define SATP_MODE_CHOICE SATP_MODE_SV32
@@ -75,7 +76,7 @@ static void cputchar(int x)
 {
   char ch = (char)x;
   uint64_t mhartid = read_csr(mhartid);
-  char* ch_ptr = (char*)(0x03001000 + (mhartid << 3));
+  char* ch_ptr = (char*)(0x0101000 + (mhartid << 3));
   *ch_ptr = ch;
 }
 
@@ -88,7 +89,7 @@ static void cputstring(const char* s)
 static void terminate(int code)
 {
   uint64_t mhartid = read_csr(mhartid);
-  uint64_t *finish_address = (uint64_t*)(0x03002000 + (mhartid << 3));
+  uint64_t *finish_address = (uint64_t*)(0x0102000 + (mhartid << 3));
   *finish_address = code;
   while (1);
 }
@@ -107,12 +108,13 @@ void wtf()
 } while(0)
 
 #if SATP_MODE_CHOICE == SATP_MODE_SV39
-# define NPT 5
+# define NPT 6
 # define l1pt pt[hartid][0]
 # define user_l2pt pt[hartid][1]
 # define kernel_l2pt pt[hartid][2]
 # define user_l3pt pt[hartid][3]
 # define mmio_l3pt pt[hartid][4]
+# define clint_l3pt pt[hartid][5]
 #else
 # error Unknown SATP_MODE_CHOICE
 #endif
@@ -217,6 +219,7 @@ void vm_boot(uintptr_t test_addr)
     mmio_l3pt[vpn0(MMIO_HPRINT_ADDR)] = (MMIO_HPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
     mmio_l3pt[vpn0(MMIO_CPRINT_ADDR)] = (MMIO_CPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
     mmio_l3pt[vpn0(MMIO_FINISH_ADDR)] = (MMIO_FINISH_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    clint_l3pt[vpn0(CLINT_BASE_ADDR)] = (CLINT_BASE_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
 #else
 # error
 #endif
