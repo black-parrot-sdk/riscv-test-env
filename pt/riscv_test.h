@@ -6,7 +6,7 @@
 #include "../p/riscv_test.h"
 
 #define TIMER_INTERVAL 100
-#define MTIME_ADDR    0x0308000
+#define MTIME_ADDR    0x030bff8
 #define MTIMECMP_ADDR 0x0304000
 
 #undef EXTRA_INIT_TIMER

@@ -9,8 +9,8 @@
 #define NC 16
 
 #define MMIO_BASE_ADDR   0x0100000
-#define MMIO_HPRINT_ADDR 0x0100000
-#define MMIO_CPRINT_ADDR 0x0101000
+#define MMIO_GETCHAR_ADDR 0x0100000
+#define MMIO_PUTCHAR_ADDR 0x0101000
 #define MMIO_FINISH_ADDR 0x0102000
 #define CLINT_BASE_ADDR  0x0300000
 
@@ -89,7 +89,7 @@ static void cputstring(const char* s)
 static void terminate(int code)
 {
   uint64_t mhartid = read_csr(mhartid);
-  uint64_t *finish_address = (uint64_t*)(0x0102000 + (mhartid << 3));
+  uint64_t *finish_address = (uint64_t*)(MMIO_FINISH_ADDR + (mhartid << 3));
   *finish_address = code;
   while (1);
 }
@@ -180,7 +180,7 @@ void handle_trap(trapframe_t* tf)
 static void coherence_torture()
 {
   // cause coherence misses without affecting program semantics
-  uint64_t random = ENTROPY;
+  uint64_t random = 0;
   while (1) {
     uintptr_t paddr = DRAM_BASE + ((random % (2 * (MAX_TEST_PAGES + 1) * PGSIZE)) & -4);
 #ifdef __riscv_atomic
@@ -214,12 +214,13 @@ void vm_boot(uintptr_t test_addr)
     kernel_l2pt[PTES_PER_PT-1] = (DRAM_BASE/RISCV_PGSIZE << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
     
     user_l2pt[0] = ((pte_t)user_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
-    user_l2pt[vpn1(MMIO_BASE_ADDR)] = ((pte_t)mmio_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
+    //user_l2pt[vpn1(MMIO_BASE_ADDR)] = ((pte_t)mmio_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
+    //user_l2pt[vpn1(CLINT_BASE_ADDR)] = ((pte_t)clint_l3pt >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V;
     
-    mmio_l3pt[vpn0(MMIO_HPRINT_ADDR)] = (MMIO_HPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-    mmio_l3pt[vpn0(MMIO_CPRINT_ADDR)] = (MMIO_CPRINT_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-    mmio_l3pt[vpn0(MMIO_FINISH_ADDR)] = (MMIO_FINISH_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
-    clint_l3pt[vpn0(CLINT_BASE_ADDR)] = (CLINT_BASE_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    //mmio_l3pt[vpn0(MMIO_GETCHAR_ADDR)] = (MMIO_GETCHAR_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    //mmio_l3pt[vpn0(MMIO_PUTCHAR_ADDR)] = (MMIO_PUTCHAR_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    //mmio_l3pt[vpn0(MMIO_FINISH_ADDR)] = (MMIO_FINISH_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    //clint_l3pt[vpn0(CLINT_BASE_ADDR)] = (CLINT_BASE_ADDR >> PGSHIFT << PTE_PPN_SHIFT) | PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
 #else
 # error
 #endif
@@ -258,7 +259,7 @@ void vm_boot(uintptr_t test_addr)
     freelist_tail = pa2kva(&freelist_nodes[MAX_TEST_PAGES-1]);
     for (long i = 0; i < MAX_TEST_PAGES; i++)
     {
-      freelist_nodes[i].addr = DRAM_BASE + (MAX_TEST_PAGES + random)*PGSIZE;
+      freelist_nodes[i].addr = DRAM_BASE + MEGAPAGE_SIZE + random*PGSIZE;
       freelist_nodes[i].next = pa2kva(&freelist_nodes[i+1]);
       random = LFSR_NEXT(random);
     }

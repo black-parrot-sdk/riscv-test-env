@@ -12,7 +12,7 @@
 
 #define STACK_TOP (_end + 4096)
 
-#define MTIME_ADDR    0x00308000
+#define MTIME_ADDR    0x0030bff8
 #define MTIMECMP_ADDR 0x00304000
 
   .section ".text.init","ax",@progbits
