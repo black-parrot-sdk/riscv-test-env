@@ -25,13 +25,18 @@ nmi_vector:
 
   .align 2
 trap_vector:
+  li t0, CAUSE_USER_ECALL
+  csrr t1, mcause
+  beq t0, t1, 1f
+  li a0, 0xffff
+1:
   csrr t0, mhartid
   li t1, 0x00102000
   slli t0, t0, 3
   add t0, t0, t1
   sd a0, 0(t0)
-1:
-  j 1b
+2:
+  j 2b
 
 handle_reset:
   la t0, trap_vector
