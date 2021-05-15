@@ -113,7 +113,7 @@
         .align  6;                                                      \
         .weak stvec_handler;                                            \
         .weak mtvec_handler;                                            \
-        .weak bp_mtvec_handler;                                         \
+        .weak __mtvec_handler;                                          \
         .globl _start;                                                  \
 _start:                                                                 \
         /* 0 all registers */                                           \
@@ -183,7 +183,7 @@ trap_vector:                                                            \
 handle_exception:                                                       \
         /* we don't know how to handle whatever the exception was */    \
         /* ... but blackparrot does! */                                 \
-        la t5, bp_mtvec_handler;                                        \
+        la t5, __mtvec_handler;                                         \
         beqz t5, other_exception;                                       \
         jr t5;                                                          \
   other_exception:                                                      \
